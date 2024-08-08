@@ -113,7 +113,6 @@ namespace irods
   public:
     pam_interactive_authentication()
     {
-      add_operation(AUTH_CLIENT_AUTH_REQUEST,  OPERATION(rcComm_t, pam_auth_client_request));
       add_operation(AUTH_CLIENT_AUTH_RESPONSE, OPERATION(rcComm_t, pam_auth_response));
       add_operation(perform_running,           OPERATION(rcComm_t, step_client_running));
       add_operation(perform_ready,             OPERATION(rcComm_t, step_client_ready));
@@ -241,7 +240,12 @@ namespace irods
 
     auto auth_client_start(rcComm_t& comm, const json& req) -> json
     {
-        json resp{req};
+        // First things first - check the server to see whether SSL is required. If so, the server will enforce its
+        // usage before the client sends any sensitive information over the network.
+        json server_request{req};
+        server_request[irods_auth::next_operation] = AUTH_AGENT_AUTH_REQUEST;
+        auto resp = irods_auth::request(comm, server_request);
+
         initialize_state(resp);
         resp["user_name"] = comm.proxyUser.userName;
         resp["zone_name"] = comm.proxyUser.rodsZone;
@@ -260,7 +264,7 @@ namespace irods
             }
         }
 
-        resp[irods_auth::next_operation] = AUTH_CLIENT_AUTH_REQUEST;
+        resp[irods_auth::next_operation] = AUTH_CLIENT_AUTH_RESPONSE;
         return resp;
     } // auth_client_start
 
@@ -297,14 +301,6 @@ namespace irods
     ///////////////////////////////////////////////
     // state REQUEST
     ///////////////////////////////////////////////
-    json pam_auth_client_request(rcComm_t& comm, const json& req) {
-      json svr_req{req};
-      svr_req[irods_auth::next_operation] = AUTH_AGENT_AUTH_REQUEST;
-      auto res = irods_auth::request(comm, svr_req);
-      res[irods_auth::next_operation] =  AUTH_CLIENT_AUTH_RESPONSE;
-      return res;      
-    }
-
     json pam_auth_response(rcComm_t&comm, const json& req) {
       irods_auth::throw_if_request_message_is_missing_key(req, {"user_name", "zone_name"});
       json svr_req{req};
@@ -540,13 +536,12 @@ namespace irods
                           "require TLS/SSL to prevent security leaks.");
         }
 
-        json resp{req};
         if (comm.auth_scheme) {
             free(comm.auth_scheme);
         }
 
         comm.auth_scheme = strdup(pam_interactive_scheme);
-        return resp;
+        return {req};
     } // native_auth_agent_request
 #endif
 
